@@ -1,68 +1,69 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { AlertCircle, CheckCircle2, Download, Loader2, MousePointerClick } from "lucide-react";
-import { type GroupedByWell, type WellTimepointRow } from "@/lib/plate-reader-parser";
-import { downloadPerWellOutputXlsx } from "@/lib/xlsx-export";
+import { downloadSingle380PerWellXlsx } from "@/lib/single-380-export";
+import { type Single380Row } from "@/lib/single-380-parser";
+import { type ParsedSingle380File, type Single380AnalysisStatus } from "@/stores/single-380-store";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { type AnalysisStatus } from "@/stores/plate-data-store";
 
-interface AnalysisStatusCardProps {
-  status: AnalysisStatus;
+interface Single380AnalysisStatusCardProps {
+  status: Single380AnalysisStatus;
   error: string | null;
-  sourceFileName: string | null;
-  rows: WellTimepointRow[];
-  groupedByWell: GroupedByWell;
+  files: ParsedSingle380File[];
+  rows: Single380Row[];
+  groupedByWell: Record<string, Single380Row[]>;
   selectionMode: boolean;
   selectedWellIds: string[];
   onToggleSelectionMode: () => void;
   onClearSelection: () => void;
 }
 
-const STATUS_LABELS: Record<AnalysisStatus, string> = {
+const STATUS_LABELS: Record<Single380AnalysisStatus, string> = {
   idle: "Idle",
-  reading: "Reading file",
-  parsing: "Parsing worksheet",
+  reading: "Reading files",
+  parsing: "Parsing worksheets",
   normalizing: "Normalizing wells",
   ready: "Ready",
   error: "Error"
 };
 
-const STATUS_DETAILS: Record<AnalysisStatus, string> = {
-  idle: "Upload a workbook to start analysis.",
+const STATUS_DETAILS: Record<Single380AnalysisStatus, string> = {
+  idle: "Upload one or more 380-only workbooks to start analysis.",
   reading: "Reading file bytes from your browser.",
-  parsing: "Detecting 340nm/380nm layout and cycle structure.",
-  normalizing: "Building normalized per-well time-series data.",
-  ready: "Analysis complete. Grid and well pages are updated.",
-  error: "Could not analyze the workbook."
+  parsing: "Detecting 380nm layout and cycle structure.",
+  normalizing: "Building normalized per-well 380 time-series data.",
+  ready: "Analysis complete. 380 plate map and details are updated.",
+  error: "Could not analyze the workbook(s)."
 };
 
-export function AnalysisStatusCard({
+export function Single380AnalysisStatusCard({
   status,
   error,
-  sourceFileName,
+  files,
   rows,
   groupedByWell,
   selectionMode,
   selectedWellIds,
   onToggleSelectionMode,
   onClearSelection
-}: AnalysisStatusCardProps) {
-  const isBusy = status === "reading" || status === "parsing" || status === "normalizing";
+}: Single380AnalysisStatusCardProps) {
   const [isExporting, setIsExporting] = useState(false);
+  const isBusy = status === "reading" || status === "parsing" || status === "normalizing";
   const canExport = status === "ready" && rows.length > 0;
   const canExportSelected = canExport && selectedWellIds.length > 0;
 
-  const handlePerWellExport = () => {
+  const sourceFileNames = useMemo(() => files.map((file) => file.sourceFileName), [files]);
+
+  const handleAllExport = () => {
     if (!canExport) {
       return;
     }
-
     setIsExporting(true);
     try {
-      downloadPerWellOutputXlsx(groupedByWell, sourceFileName);
+      downloadSingle380PerWellXlsx(groupedByWell, sourceFileNames);
     } finally {
       setIsExporting(false);
     }
@@ -72,10 +73,9 @@ export function AnalysisStatusCard({
     if (!canExportSelected) {
       return;
     }
-
     setIsExporting(true);
     try {
-      downloadPerWellOutputXlsx(groupedByWell, sourceFileName, selectedWellIds);
+      downloadSingle380PerWellXlsx(groupedByWell, sourceFileNames, selectedWellIds);
     } finally {
       setIsExporting(false);
     }
@@ -96,10 +96,14 @@ export function AnalysisStatusCard({
           {status === "error" && <AlertCircle className="h-4 w-4 text-destructive" />}
           <span>{STATUS_DETAILS[status]}</span>
         </div>
-        {sourceFileName && <p className="text-xs text-muted-foreground">Source file: {sourceFileName}</p>}
+        {files.length > 0 && (
+          <p className="text-xs text-muted-foreground">
+            Source files: {files.map((file) => file.sourceFileName).join(", ")}
+          </p>
+        )}
         {status === "error" && error && <p className="text-sm text-destructive">{error}</p>}
         <div className="flex flex-wrap gap-2 pt-1">
-          <Button variant="outline" size="sm" onClick={handlePerWellExport} disabled={!canExport || isExporting}>
+          <Button variant="outline" size="sm" onClick={handleAllExport} disabled={!canExport || isExporting}>
             <Download className="mr-2 h-4 w-4" />
             Download table XLSX
           </Button>
@@ -124,3 +128,4 @@ export function AnalysisStatusCard({
     </Card>
   );
 }
+

@@ -11,6 +11,9 @@ export interface PlateGridWellSummary {
 
 interface PlateGridProps {
   summaries: Record<string, PlateGridWellSummary>;
+  selectionMode: boolean;
+  selectedWellIds: Set<string>;
+  onToggleWellSelection: (wellId: string) => void;
 }
 
 const ROWS = Array.from({ length: 16 }, (_, index) => String.fromCharCode(65 + index));
@@ -23,7 +26,7 @@ function formatRatio(value: number | null) {
   return value.toFixed(3);
 }
 
-export function PlateGrid({ summaries }: PlateGridProps) {
+export function PlateGrid({ summaries, selectionMode, selectedWellIds, onToggleWellSelection }: PlateGridProps) {
   return (
     <div className="overflow-x-auto rounded-xl border bg-card p-3 shadow-sm">
       <table className="w-full border-collapse text-xs">
@@ -51,20 +54,41 @@ export function PlateGrid({ summaries }: PlateGridProps) {
 
                 return (
                   <td key={wellId} className="p-1">
-                    <Link
-                      href={`/well/${wellId}`}
-                      className={cn(
-                        "block min-w-[66px] rounded-md border p-1.5 text-left transition-colors",
-                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                        summary.hasData
-                          ? "border-primary/40 bg-primary/5 hover:bg-primary/15"
-                          : "border-border bg-muted/35 hover:bg-muted/55"
-                      )}
-                    >
-                      <p className="font-semibold leading-tight">{wellId}</p>
-                      <p className="leading-tight text-muted-foreground">r: {formatRatio(summary.latestRatio)}</p>
-                      <p className="leading-tight text-muted-foreground">n: {summary.timepoints}</p>
-                    </Link>
+                    {selectionMode ? (
+                      <button
+                        type="button"
+                        onClick={() => onToggleWellSelection(wellId)}
+                        className={cn(
+                          "block min-w-[66px] rounded-md border p-1.5 text-left transition-colors",
+                          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          selectedWellIds.has(wellId)
+                            ? "border-accent bg-accent/30 hover:bg-accent/40"
+                            : summary.hasData
+                              ? "border-primary/40 bg-primary/5 hover:bg-primary/15"
+                              : "border-border bg-muted/35 hover:bg-muted/55"
+                        )}
+                        aria-pressed={selectedWellIds.has(wellId)}
+                      >
+                        <p className="font-semibold leading-tight">{wellId}</p>
+                        <p className="leading-tight text-muted-foreground">r: {formatRatio(summary.latestRatio)}</p>
+                        <p className="leading-tight text-muted-foreground">n: {summary.timepoints}</p>
+                      </button>
+                    ) : (
+                      <Link
+                        href={`/well/${wellId}`}
+                        className={cn(
+                          "block min-w-[66px] rounded-md border p-1.5 text-left transition-colors",
+                          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          summary.hasData
+                            ? "border-primary/40 bg-primary/5 hover:bg-primary/15"
+                            : "border-border bg-muted/35 hover:bg-muted/55"
+                        )}
+                      >
+                        <p className="font-semibold leading-tight">{wellId}</p>
+                        <p className="leading-tight text-muted-foreground">r: {formatRatio(summary.latestRatio)}</p>
+                        <p className="leading-tight text-muted-foreground">n: {summary.timepoints}</p>
+                      </Link>
+                    )}
                   </td>
                 );
               })}
@@ -75,4 +99,3 @@ export function PlateGrid({ summaries }: PlateGridProps) {
     </div>
   );
 }
-

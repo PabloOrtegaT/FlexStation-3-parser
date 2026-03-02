@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Beaker, FlaskConical, Trash2 } from "lucide-react";
 import { AnalysisStatusCard } from "@/components/analysis-status";
@@ -20,8 +20,11 @@ function prettyDate(iso: string | null): string {
 
 export function PlateReaderDashboard() {
   const { status, error, meta, groupedByWell, rows, sourceFileName, uploadedAt, analyzeFile, clearData } = usePlateDataStore();
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedWellIds, setSelectedWellIds] = useState<string[]>([]);
 
   const busy = status === "reading" || status === "parsing" || status === "normalizing";
+  const selectedWellSet = useMemo(() => new Set(selectedWellIds), [selectedWellIds]);
 
   const gridSummaries = useMemo(() => {
     const summaries: Record<string, { hasData: boolean; latestRatio: number | null; timepoints: number }> = {};
@@ -35,6 +38,28 @@ export function PlateReaderDashboard() {
     }
     return summaries;
   }, [groupedByWell]);
+
+  const handleToggleSelectionMode = () => {
+    setSelectionMode((prev) => {
+      if (prev) {
+        setSelectedWellIds([]);
+      }
+      return !prev;
+    });
+  };
+
+  const handleToggleWellSelection = (wellId: string) => {
+    setSelectedWellIds((prev) => {
+      if (prev.includes(wellId)) {
+        return prev.filter((id) => id !== wellId);
+      }
+      return [...prev, wellId];
+    });
+  };
+
+  const handleClearSelection = () => {
+    setSelectedWellIds([]);
+  };
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-[1600px] flex-col gap-6 p-4 md:p-8">
@@ -64,7 +89,17 @@ export function PlateReaderDashboard() {
 
       <section className="grid gap-4 xl:grid-cols-[1.1fr_1fr]">
         <UploadDropzone disabled={busy} onFileSelected={analyzeFile} />
-        <AnalysisStatusCard status={status} error={error} sourceFileName={sourceFileName} />
+        <AnalysisStatusCard
+          status={status}
+          error={error}
+          sourceFileName={sourceFileName}
+          rows={rows}
+          groupedByWell={groupedByWell}
+          selectionMode={selectionMode}
+          selectedWellIds={selectedWellIds}
+          onToggleSelectionMode={handleToggleSelectionMode}
+          onClearSelection={handleClearSelection}
+        />
       </section>
 
       <section className="grid gap-4 lg:grid-cols-3">
@@ -127,9 +162,16 @@ export function PlateReaderDashboard() {
       <section className="space-y-2">
         <h2 className="text-lg font-semibold">Plate Map</h2>
         <p className="text-sm text-muted-foreground">
-          Each cell shows the latest ratio and number of timepoints. Click any cell to open the well detail page.
+          {selectionMode
+            ? "Selection mode is enabled. Click cells to select wells for export."
+            : "Each cell shows the latest ratio and number of timepoints. Click any cell to open the well detail page."}
         </p>
-        <PlateGrid summaries={gridSummaries} />
+        <PlateGrid
+          summaries={gridSummaries}
+          selectionMode={selectionMode}
+          selectedWellIds={selectedWellSet}
+          onToggleWellSelection={handleToggleWellSelection}
+        />
       </section>
     </main>
   );

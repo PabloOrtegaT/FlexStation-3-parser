@@ -1,6 +1,10 @@
-import { PlateReaderDashboard } from "@/components/plate-reader-dashboard";
+import { Suspense } from "react";
+import { HomeTabs } from "@/components/home-tabs";
 
 export default function HomePage() {
-  return <PlateReaderDashboard />;
+  return (
+    <Suspense fallback={<div className="p-4 text-sm text-muted-foreground">Loading...</div>}>
+      <HomeTabs />
+    </Suspense>
+  );
 }
-
