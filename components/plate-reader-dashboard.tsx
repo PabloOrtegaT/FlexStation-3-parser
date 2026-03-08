@@ -3,12 +3,25 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Beaker, FlaskConical, Trash2 } from "lucide-react";
+import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { AnalysisStatusCard } from "@/components/analysis-status";
 import { PlateGrid } from "@/components/plate-grid";
 import { UploadDropzone } from "@/components/upload-dropzone";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { getAutoYDomain } from "@/lib/chart-domain";
+import { CHART_HEIGHTS_PX } from "@/lib/chart-heights";
 import { usePlateDataStore } from "@/stores/plate-data-store";
+
+const COMPARISON_COLORS = ["#0f766e", "#d97706", "#2563eb", "#b45309", "#be123c", "#4338ca", "#15803d", "#0ea5e9"];
+
+function formatYAxisTick(value: number | string): string {
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) {
+    return String(value);
+  }
+  return numeric.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
 
 function prettyDate(iso: string | null): string {
   if (!iso) {
@@ -25,6 +38,10 @@ export function PlateReaderDashboard() {
 
   const busy = status === "reading" || status === "parsing" || status === "normalizing";
   const selectedWellSet = useMemo(() => new Set(selectedWellIds), [selectedWellIds]);
+  const comparisonWellIds = useMemo(
+    () => selectedWellIds.filter((wellId) => (groupedByWell[wellId]?.length ?? 0) > 0),
+    [groupedByWell, selectedWellIds]
+  );
 
   const gridSummaries = useMemo(() => {
     const summaries: Record<string, { hasData: boolean; latestRatio: number | null; timepoints: number }> = {};
@@ -38,6 +55,41 @@ export function PlateReaderDashboard() {
     }
     return summaries;
   }, [groupedByWell]);
+
+  const comparison340Data = useMemo(() => {
+    const byTimepoint = new Map<number, Record<string, number | null>>();
+
+    for (const wellId of comparisonWellIds) {
+      const wellSeries = groupedByWell[wellId] ?? [];
+      for (const point of wellSeries) {
+        if (!byTimepoint.has(point.timepointIndex)) {
+          byTimepoint.set(point.timepointIndex, { timepointIndex: point.timepointIndex });
+        }
+        byTimepoint.get(point.timepointIndex)![wellId] = point.f340;
+      }
+    }
+
+    return [...byTimepoint.values()].sort((a, b) => Number(a.timepointIndex) - Number(b.timepointIndex));
+  }, [comparisonWellIds, groupedByWell]);
+
+  const comparison380Data = useMemo(() => {
+    const byTimepoint = new Map<number, Record<string, number | null>>();
+
+    for (const wellId of comparisonWellIds) {
+      const wellSeries = groupedByWell[wellId] ?? [];
+      for (const point of wellSeries) {
+        if (!byTimepoint.has(point.timepointIndex)) {
+          byTimepoint.set(point.timepointIndex, { timepointIndex: point.timepointIndex });
+        }
+        byTimepoint.get(point.timepointIndex)![wellId] = point.f380;
+      }
+    }
+
+    return [...byTimepoint.values()].sort((a, b) => Number(a.timepointIndex) - Number(b.timepointIndex));
+  }, [comparisonWellIds, groupedByWell]);
+
+  const comparison340Domain = useMemo(() => getAutoYDomain(comparison340Data, comparisonWellIds), [comparison340Data, comparisonWellIds]);
+  const comparison380Domain = useMemo(() => getAutoYDomain(comparison380Data, comparisonWellIds), [comparison380Data, comparisonWellIds]);
 
   const handleToggleSelectionMode = () => {
     setSelectionMode((prev) => {
@@ -66,7 +118,7 @@ export function PlateReaderDashboard() {
       <header className="space-y-3">
         <div className="inline-flex items-center gap-2 rounded-full border bg-card px-3 py-1 text-xs font-medium text-muted-foreground">
           <FlaskConical className="h-4 w-4 text-primary" />
-          Next.js Plate Reader Viewer
+          340/380 Wavelengths + ratio
         </div>
         <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
           <div className="space-y-1">
@@ -76,9 +128,6 @@ export function PlateReaderDashboard() {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" asChild>
-              <Link href="/well/A3">Open A3 detail</Link>
-            </Button>
             <Button variant="secondary" onClick={clearData} disabled={busy}>
               <Trash2 className="mr-2 h-4 w-4" />
               Clear data
@@ -102,6 +151,98 @@ export function PlateReaderDashboard() {
         />
       </section>
 
+      <section className="space-y-2">
+        <h2 className="text-lg font-semibold">Plate Map</h2>
+        <p className="text-sm text-muted-foreground">
+          {selectionMode
+            ? "Selection mode is enabled. Click cells to select wells for export and chart comparison."
+            : "Each cell shows the latest ratio and number of timepoints. Click any cell to open the well detail page."}
+        </p>
+        <PlateGrid
+          summaries={gridSummaries}
+          selectionMode={selectionMode}
+          selectedWellIds={selectedWellSet}
+          onToggleWellSelection={handleToggleWellSelection}
+        />
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="text-lg font-semibold">Selected Wells Comparison</h2>
+        <p className="text-sm text-muted-foreground">
+          Compare selected wells by wavelength. Use "Select wells" in Analysis Status, then click plate cells.
+        </p>
+        {comparisonWellIds.length === 0 ? (
+          <Card>
+            <CardContent className="py-6 text-sm text-muted-foreground">
+              No selected wells with data yet. Enable selection mode, select wells, and comparison charts will appear here.
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid gap-4">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">f340 Comparison</CardTitle>
+                <CardDescription>One line per selected well.</CardDescription>
+              </CardHeader>
+              <CardContent style={{ height: CHART_HEIGHTS_PX.dashboardComparison }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={comparison340Data}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="timepointIndex" />
+                    <YAxis domain={comparison340Domain} allowDataOverflow tickFormatter={formatYAxisTick} width={64} />
+                    <Tooltip />
+                    <Legend />
+                    {comparisonWellIds.map((wellId, idx) => (
+                      <Line
+                        key={`f340-${wellId}`}
+                        type="monotone"
+                        dataKey={wellId}
+                        name={wellId}
+                        stroke={COMPARISON_COLORS[idx % COMPARISON_COLORS.length]}
+                        strokeWidth={2}
+                        dot={{ r: 2 }}
+                        activeDot={{ r: 4 }}
+                      />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">f380 Comparison</CardTitle>
+                <CardDescription>One line per selected well.</CardDescription>
+              </CardHeader>
+              <CardContent style={{ height: CHART_HEIGHTS_PX.dashboardComparison }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={comparison380Data}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="timepointIndex" />
+                    <YAxis domain={comparison380Domain} allowDataOverflow tickFormatter={formatYAxisTick} width={64} />
+                    <Tooltip />
+                    <Legend />
+                    {comparisonWellIds.map((wellId, idx) => (
+                      <Line
+                        key={`f380-${wellId}`}
+                        type="monotone"
+                        dataKey={wellId}
+                        name={wellId}
+                        stroke={COMPARISON_COLORS[idx % COMPARISON_COLORS.length]}
+                        strokeWidth={2}
+                        dot={{ r: 2 }}
+                        activeDot={{ r: 4 }}
+                      />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+      </section>
+
+      {/*
       <section className="grid gap-4 lg:grid-cols-3">
         <Card>
           <CardHeader className="pb-3">
@@ -158,21 +299,7 @@ export function PlateReaderDashboard() {
           </CardContent>
         </Card>
       </section>
-
-      <section className="space-y-2">
-        <h2 className="text-lg font-semibold">Plate Map</h2>
-        <p className="text-sm text-muted-foreground">
-          {selectionMode
-            ? "Selection mode is enabled. Click cells to select wells for export."
-            : "Each cell shows the latest ratio and number of timepoints. Click any cell to open the well detail page."}
-        </p>
-        <PlateGrid
-          summaries={gridSummaries}
-          selectionMode={selectionMode}
-          selectedWellIds={selectedWellSet}
-          onToggleWellSelection={handleToggleWellSelection}
-        />
-      </section>
+      */}
     </main>
   );
 }

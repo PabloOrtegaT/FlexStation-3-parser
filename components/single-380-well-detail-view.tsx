@@ -8,6 +8,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { YAxisRangeControls } from "@/components/y-axis-range-controls";
+import { CHART_HEIGHTS_PX } from "@/lib/chart-heights";
+import { useYDomainControls } from "@/lib/use-y-domain-controls";
 import { useSingle380Store } from "@/stores/single-380-store";
 
 const LINE_COLORS = ["#0f766e", "#d97706", "#2563eb", "#b45309", "#be123c", "#4338ca", "#15803d", "#0ea5e9"];
@@ -34,6 +37,7 @@ function isValidWellId(wellId: string): boolean {
 export function Single380WellDetailView({ wellId }: Single380WellDetailViewProps) {
   const normalizedWellId = normalizeWellId(wellId);
   const { groupedByWell, files } = useSingle380Store();
+  const f380Axis = useYDomainControls();
 
   const series = groupedByWell[normalizedWellId] ?? [];
   const fileNames = [...new Set(series.map((row) => row.sourceFileName))].sort((a, b) => a.localeCompare(b));
@@ -151,17 +155,35 @@ export function Single380WellDetailView({ wellId }: Single380WellDetailViewProps
           <CardHeader className="pb-2">
             <CardTitle className="text-base">f380 Curve</CardTitle>
             <CardDescription>One line per loaded file.</CardDescription>
+            <YAxisRangeControls
+              className="pt-2"
+              minInput={f380Axis.minInput}
+              maxInput={f380Axis.maxInput}
+              onMinInputChange={f380Axis.setMinInput}
+              onMaxInputChange={f380Axis.setMaxInput}
+              onReset={f380Axis.reset}
+              error={f380Axis.error}
+              isCustom={f380Axis.isCustom}
+            />
           </CardHeader>
-          <CardContent className="h-72">
+          <CardContent style={{ height: CHART_HEIGHTS_PX.single380Curve }}>
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={f380ChartData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="timepointIndex" />
-                <YAxis />
+                <YAxis domain={f380Axis.domain} allowDataOverflow />
                 <Tooltip />
                 <Legend />
                 {fileNames.map((fileName, idx) => (
-                  <Line key={fileName} type="monotone" dataKey={fileName} stroke={LINE_COLORS[idx % LINE_COLORS.length]} strokeWidth={2} dot={false} />
+                  <Line
+                    key={fileName}
+                    type="monotone"
+                    dataKey={fileName}
+                    stroke={LINE_COLORS[idx % LINE_COLORS.length]}
+                    strokeWidth={2}
+                    dot={{ r: 2 }}
+                    activeDot={{ r: 4 }}
+                  />
                 ))}
               </LineChart>
             </ResponsiveContainer>

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useMemo, useState } from "react";
 import {
   CartesianGrid,
   Legend,
@@ -17,6 +18,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { YAxisRangeControls } from "@/components/y-axis-range-controls";
+import { CHART_HEIGHTS_PX } from "@/lib/chart-heights";
+import { useYDomainControls } from "@/lib/use-y-domain-controls";
 import { usePlateDataStore } from "@/stores/plate-data-store";
 
 interface WellDetailViewProps {
@@ -44,6 +48,21 @@ export function WellDetailView({ wellId }: WellDetailViewProps) {
 
   const series = groupedByWell[normalizedWellId] ?? [];
   const latest = series[series.length - 1];
+  const fluorescenceAxis = useYDomainControls();
+  const ratioAxis = useYDomainControls();
+  const [showF340, setShowF340] = useState(true);
+  const [showF380, setShowF380] = useState(true);
+
+  const hasVisibleFluorescenceSeries = showF340 || showF380;
+  const fluorescenceSeries = useMemo(
+    () =>
+      series.map((point) => ({
+        ...point,
+        f340: showF340 ? point.f340 : null,
+        f380: showF380 ? point.f380 : null
+      })),
+    [series, showF340, showF380]
+  );
 
   if (!isValidWellId(normalizedWellId)) {
     return (
@@ -113,8 +132,8 @@ export function WellDetailView({ wellId }: WellDetailViewProps) {
         </div>
       </header>
 
-      <section className="grid gap-4 md:grid-cols-5">
-        <Card className="md:col-span-2">
+      <section className="grid gap-4">
+        <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Latest Snapshot</CardTitle>
             <CardDescription>Most recent values for this well.</CardDescription>
@@ -143,23 +162,47 @@ export function WellDetailView({ wellId }: WellDetailViewProps) {
           </CardContent>
         </Card>
 
-        <Card className="md:col-span-3">
+        <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-base">Fluorescence Curves</CardTitle>
             <CardDescription>f340 and f380 over timepoint index.</CardDescription>
+            <div className="flex flex-wrap items-center gap-2 pt-2">
+              <Button size="sm" variant={showF340 ? "default" : "outline"} onClick={() => setShowF340((prev) => !prev)}>
+                {showF340 ? "Hide f340" : "Show f340"}
+              </Button>
+              <Button size="sm" variant={showF380 ? "default" : "outline"} onClick={() => setShowF380((prev) => !prev)}>
+                {showF380 ? "Hide f380" : "Show f380"}
+              </Button>
+            </div>
+            <YAxisRangeControls
+              className="pt-2"
+              minInput={fluorescenceAxis.minInput}
+              maxInput={fluorescenceAxis.maxInput}
+              onMinInputChange={fluorescenceAxis.setMinInput}
+              onMaxInputChange={fluorescenceAxis.setMaxInput}
+              onReset={fluorescenceAxis.reset}
+              error={fluorescenceAxis.error}
+              isCustom={fluorescenceAxis.isCustom}
+            />
           </CardHeader>
-          <CardContent className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={series}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="timepointIndex" />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                <Line type="monotone" dataKey="f340" stroke="#d97706" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="f380" stroke="#0f766e" strokeWidth={2} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
+          <CardContent style={{ height: CHART_HEIGHTS_PX.wellDetailFluorescence }}>
+            {hasVisibleFluorescenceSeries ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={fluorescenceSeries}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="timepointIndex" />
+                  <YAxis domain={fluorescenceAxis.domain} allowDataOverflow />
+                  <Tooltip />
+                  <Legend />
+                  {showF340 && <Line type="monotone" dataKey="f340" stroke="#d97706" strokeWidth={2} dot={{ r: 2 }} activeDot={{ r: 4 }} />}
+                  {showF380 && <Line type="monotone" dataKey="f380" stroke="#0f766e" strokeWidth={2} dot={{ r: 2 }} activeDot={{ r: 4 }} />}
+                </LineChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex h-full items-center justify-center rounded-md border border-dashed text-sm text-muted-foreground">
+                Select at least one fluorescence curve to render the chart.
+              </div>
+            )}
           </CardContent>
         </Card>
       </section>
@@ -168,15 +211,25 @@ export function WellDetailView({ wellId }: WellDetailViewProps) {
         <CardHeader className="pb-2">
           <CardTitle className="text-base">Ratio Trend</CardTitle>
           <CardDescription>Computed as f340 / f380</CardDescription>
+          <YAxisRangeControls
+            className="pt-2"
+            minInput={ratioAxis.minInput}
+            maxInput={ratioAxis.maxInput}
+            onMinInputChange={ratioAxis.setMinInput}
+            onMaxInputChange={ratioAxis.setMaxInput}
+            onReset={ratioAxis.reset}
+            error={ratioAxis.error}
+            isCustom={ratioAxis.isCustom}
+          />
         </CardHeader>
-        <CardContent className="h-64">
+        <CardContent style={{ height: CHART_HEIGHTS_PX.wellDetailRatio }}>
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={series}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="timepointIndex" />
-              <YAxis />
+              <YAxis domain={ratioAxis.domain} allowDataOverflow />
               <Tooltip />
-              <Line type="monotone" dataKey="ratio" stroke="#7c2d12" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="ratio" stroke="#7c2d12" strokeWidth={2} dot={{ r: 2 }} activeDot={{ r: 4 }} />
             </LineChart>
           </ResponsiveContainer>
         </CardContent>
@@ -217,4 +270,3 @@ export function WellDetailView({ wellId }: WellDetailViewProps) {
     </main>
   );
 }
-

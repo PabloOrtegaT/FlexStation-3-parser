@@ -3,15 +3,27 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { FlaskConical, Trash2 } from "lucide-react";
+import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Single380AnalysisStatusCard } from "@/components/single-380-analysis-status";
 import { UploadMultiDropzone } from "@/components/upload-multi-dropzone";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { getAutoYDomain } from "@/lib/chart-domain";
+import { CHART_HEIGHTS_PX } from "@/lib/chart-heights";
 import { cn } from "@/lib/utils";
 import { useSingle380Store } from "@/stores/single-380-store";
 
 const ROWS = Array.from({ length: 16 }, (_, index) => String.fromCharCode(65 + index));
 const COLS = Array.from({ length: 24 }, (_, index) => index + 1);
+const COMPARISON_COLORS = ["#0f766e", "#d97706", "#2563eb", "#b45309", "#be123c", "#4338ca", "#15803d", "#0ea5e9"];
+
+function formatYAxisTick(value: number | string): string {
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) {
+    return String(value);
+  }
+  return numeric.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
 
 function prettyDate(iso: string | null): string {
   if (!iso) {
@@ -35,6 +47,10 @@ export function Single380Dashboard() {
 
   const busy = status === "reading" || status === "parsing" || status === "normalizing";
   const selectedWellSet = useMemo(() => new Set(selectedWellIds), [selectedWellIds]);
+  const comparisonWellIds = useMemo(
+    () => selectedWellIds.filter((wellId) => (groupedByWell[wellId]?.length ?? 0) > 0),
+    [groupedByWell, selectedWellIds]
+  );
 
   const gridSummaries = useMemo(() => {
     const summaries: Record<string, { hasData: boolean; latestF380: number | null; timepoints: number; filesCount: number }> = {};
@@ -52,6 +68,36 @@ export function Single380Dashboard() {
   }, [groupedByWell]);
 
   const firstMeta = files[0]?.meta ?? null;
+
+  const comparison380Data = useMemo(() => {
+    const byTimepoint = new Map<number, Record<string, number | null>>();
+
+    for (const wellId of comparisonWellIds) {
+      const aggregatesByTimepoint = new Map<number, { sum: number; count: number }>();
+      const wellRows = groupedByWell[wellId] ?? [];
+
+      for (const row of wellRows) {
+        if (row.f380 === null || Number.isNaN(row.f380)) {
+          continue;
+        }
+
+        const bucket = aggregatesByTimepoint.get(row.timepointIndex) ?? { sum: 0, count: 0 };
+        bucket.sum += row.f380;
+        bucket.count += 1;
+        aggregatesByTimepoint.set(row.timepointIndex, bucket);
+      }
+
+      for (const [timepointIndex, aggregate] of aggregatesByTimepoint) {
+        if (!byTimepoint.has(timepointIndex)) {
+          byTimepoint.set(timepointIndex, { timepointIndex });
+        }
+        byTimepoint.get(timepointIndex)![wellId] = aggregate.count > 0 ? aggregate.sum / aggregate.count : null;
+      }
+    }
+
+    return [...byTimepoint.values()].sort((a, b) => Number(a.timepointIndex) - Number(b.timepointIndex));
+  }, [comparisonWellIds, groupedByWell]);
+  const comparison380Domain = useMemo(() => getAutoYDomain(comparison380Data, comparisonWellIds), [comparison380Data, comparisonWellIds]);
 
   const handleToggleSelectionMode = () => {
     setSelectionMode((prev) => {
@@ -111,6 +157,7 @@ export function Single380Dashboard() {
         />
       </section>
 
+      {/*
       <section className="grid gap-4 lg:grid-cols-3">
         <Card>
           <CardHeader className="pb-3">
@@ -154,12 +201,13 @@ export function Single380Dashboard() {
           </CardContent>
         </Card>
       </section>
+      */}
 
       <section className="space-y-2">
         <h2 className="text-lg font-semibold">Plate Map</h2>
         <p className="text-sm text-muted-foreground">
           {selectionMode
-            ? "Selection mode is enabled. Click cells to select wells for export."
+            ? "Selection mode is enabled. Click cells to select wells for export and chart comparison."
             : "Click a cell to inspect combined file traces for that well."}
         </p>
         <div className="overflow-x-auto rounded-xl border bg-card p-3 shadow-sm">
@@ -232,6 +280,50 @@ export function Single380Dashboard() {
             </tbody>
           </table>
         </div>
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="text-lg font-semibold">Selected Wells Comparison</h2>
+        <p className="text-sm text-muted-foreground">
+          One line per selected well using averaged f380 values per timepoint across loaded files.
+        </p>
+        {comparisonWellIds.length === 0 ? (
+          <Card>
+            <CardContent className="py-6 text-sm text-muted-foreground">
+              No selected wells with data yet. Enable selection mode, select wells, and the comparison chart will appear here.
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">f380 Comparison</CardTitle>
+              <CardDescription>One line per selected well.</CardDescription>
+            </CardHeader>
+            <CardContent style={{ height: CHART_HEIGHTS_PX.dashboardComparison }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={comparison380Data}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="timepointIndex" />
+                  <YAxis domain={comparison380Domain} allowDataOverflow tickFormatter={formatYAxisTick} width={64} />
+                  <Tooltip />
+                  <Legend />
+                  {comparisonWellIds.map((wellId, idx) => (
+                    <Line
+                      key={wellId}
+                      type="monotone"
+                      dataKey={wellId}
+                      name={wellId}
+                      stroke={COMPARISON_COLORS[idx % COMPARISON_COLORS.length]}
+                      strokeWidth={2}
+                      dot={{ r: 2 }}
+                      activeDot={{ r: 4 }}
+                    />
+                  ))}
+                </LineChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        )}
       </section>
     </main>
   );
