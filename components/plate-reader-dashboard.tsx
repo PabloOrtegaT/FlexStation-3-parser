@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Beaker, FlaskConical, Trash2 } from "lucide-react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
@@ -14,6 +14,16 @@ import { CHART_HEIGHTS_PX } from "@/lib/chart-heights";
 import { usePlateDataStore } from "@/stores/plate-data-store";
 
 const COMPARISON_COLORS = ["#0f766e", "#d97706", "#2563eb", "#b45309", "#be123c", "#4338ca", "#15803d", "#0ea5e9"];
+const SELECTION_STORAGE_KEY = "plate-reader-selection-v1";
+
+interface PersistedSelectionState {
+  selectionMode: boolean;
+  selectedWellIds: string[];
+}
+
+function isValidWellId(wellId: string): boolean {
+  return /^[A-P](?:[1-9]|1[0-9]|2[0-4])$/.test(wellId);
+}
 
 function formatYAxisTick(value: number | string): string {
   const numeric = typeof value === "number" ? value : Number(value);
@@ -35,6 +45,48 @@ export function PlateReaderDashboard() {
   const { status, error, meta, groupedByWell, rows, sourceFileName, uploadedAt, analyzeFile, clearData } = usePlateDataStore();
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedWellIds, setSelectedWellIds] = useState<string[]>([]);
+  const hasRestoredSelectionState = useRef(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const raw = window.localStorage.getItem(SELECTION_STORAGE_KEY);
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as PersistedSelectionState;
+        if (parsed && typeof parsed === "object") {
+          const persistedSelectionMode = Boolean(parsed.selectionMode);
+          const persistedWellIds = Array.isArray(parsed.selectedWellIds)
+            ? parsed.selectedWellIds.filter((wellId): wellId is string => typeof wellId === "string" && isValidWellId(wellId))
+            : [];
+
+          setSelectionMode(persistedSelectionMode);
+          setSelectedWellIds([...new Set(persistedWellIds)]);
+        }
+      } catch {
+        // Ignore corrupted local storage payloads.
+      }
+    }
+    hasRestoredSelectionState.current = true;
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (!hasRestoredSelectionState.current) {
+      return;
+    }
+
+    const payload: PersistedSelectionState = {
+      selectionMode,
+      selectedWellIds
+    };
+
+    window.localStorage.setItem(SELECTION_STORAGE_KEY, JSON.stringify(payload));
+  }, [selectedWellIds, selectionMode]);
 
   const busy = status === "reading" || status === "parsing" || status === "normalizing";
   const selectedWellSet = useMemo(() => new Set(selectedWellIds), [selectedWellIds]);
