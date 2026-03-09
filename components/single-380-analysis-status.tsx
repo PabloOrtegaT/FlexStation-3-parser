@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, CheckCircle2, Download, Loader2, MousePointerClick } from "lucide-react";
-import { downloadSingle380PerWellXlsx } from "@/lib/single-380-export";
+import { downloadSingle380MultiSheetXlsx, downloadSingle380PerWellXlsx, type Single380SheetSelection } from "@/lib/single-380-export";
 import { type Single380Row } from "@/lib/single-380-parser";
 import { type ParsedSingle380File, type Single380AnalysisStatus } from "@/stores/single-380-store";
 import { Badge } from "@/components/ui/badge";
@@ -38,6 +38,34 @@ const STATUS_DETAILS: Record<Single380AnalysisStatus, string> = {
   ready: "Analysis complete. 380 plate map and details are updated.",
   error: "Could not analyze the workbook(s)."
 };
+const SHEET_BUILDER_STORAGE_KEY = "single-380-multi-sheet-builder-v2";
+const INPUT_CLASS =
+  "h-8 rounded-md border bg-background px-2 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+
+function parseWellId(wellId: string): { row: number; col: number } {
+  const match = /^([A-Z])(\d+)$/.exec(wellId);
+  if (!match) {
+    return { row: Number.MAX_SAFE_INTEGER, col: Number.MAX_SAFE_INTEGER };
+  }
+
+  return {
+    row: match[1].charCodeAt(0) - 65,
+    col: Number(match[2])
+  };
+}
+
+function compareWellIds(a: string, b: string): number {
+  const pa = parseWellId(a);
+  const pb = parseWellId(b);
+  if (pa.row !== pb.row) {
+    return pa.row - pb.row;
+  }
+  return pa.col - pb.col;
+}
+
+function isValidWellId(wellId: string): boolean {
+  return /^[A-P](?:[1-9]|1[0-9]|2[0-4])$/.test(wellId);
+}
 
 export function Single380AnalysisStatusCard({
   status,
@@ -51,11 +79,86 @@ export function Single380AnalysisStatusCard({
   onClearSelection
 }: Single380AnalysisStatusCardProps) {
   const [isExporting, setIsExporting] = useState(false);
+  const [sheetSelections, setSheetSelections] = useState<Single380SheetSelection[]>([]);
+  const hasRestoredSheetBuilder = useRef(false);
   const isBusy = status === "reading" || status === "parsing" || status === "normalizing";
   const canExport = status === "ready" && rows.length > 0;
   const canExportSelected = canExport && selectedWellIds.length > 0;
+  const selectedExportWellIds = useMemo(
+    () => [...new Set(selectedWellIds)].filter((wellId) => groupedByWell[wellId]).sort(compareWellIds),
+    [groupedByWell, selectedWellIds]
+  );
+  const canAddSheetSelection = canExport && selectedExportWellIds.length > 0;
+  const canDownloadMultiSheet = canExport && sheetSelections.length > 0;
 
   const sourceFileNames = useMemo(() => files.map((file) => file.sourceFileName), [files]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const raw = window.localStorage.getItem(SHEET_BUILDER_STORAGE_KEY);
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          const restored: Single380SheetSelection[] = parsed
+            .map((entry, idx) => {
+              if (!entry || typeof entry !== "object") {
+                return null;
+              }
+
+              const sheetName = typeof entry.sheetName === "string" && entry.sheetName.trim() ? entry.sheetName : `Sheet ${idx + 1}`;
+              const wells = Array.isArray(entry.wells)
+                ? (entry.wells as unknown[])
+                    .filter((well: unknown): well is { wellId: string; label: string } => {
+                      if (!well || typeof well !== "object") {
+                        return false;
+                      }
+
+                      const candidate = well as { wellId?: unknown; label?: unknown };
+                      return typeof candidate.wellId === "string" && isValidWellId(candidate.wellId) && typeof candidate.label === "string";
+                    })
+                    .map((well) => ({
+                      wellId: well.wellId,
+                      label: well.label
+                    }))
+                : [];
+
+              if (wells.length === 0) {
+                return null;
+              }
+
+              return {
+                sheetName,
+                wells
+              };
+            })
+            .filter((entry): entry is Single380SheetSelection => Boolean(entry));
+
+          if (restored.length > 0) {
+            setSheetSelections(restored);
+          }
+        }
+      } catch {
+        // Ignore corrupted local storage payloads.
+      }
+    }
+
+    hasRestoredSheetBuilder.current = true;
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (!hasRestoredSheetBuilder.current) {
+      return;
+    }
+
+    window.localStorage.setItem(SHEET_BUILDER_STORAGE_KEY, JSON.stringify(sheetSelections));
+  }, [sheetSelections]);
 
   const handleAllExport = () => {
     if (!canExport) {
@@ -76,6 +179,67 @@ export function Single380AnalysisStatusCard({
     setIsExporting(true);
     try {
       downloadSingle380PerWellXlsx(groupedByWell, sourceFileNames, selectedWellIds);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleAddSheetSelection = () => {
+    if (!canAddSheetSelection) {
+      return;
+    }
+
+    setSheetSelections((prev) => [
+      ...prev,
+      {
+        sheetName: `Sheet ${prev.length + 1}`,
+        wells: selectedExportWellIds.map((wellId) => ({
+          wellId,
+          label: wellId
+        }))
+      }
+    ]);
+    onClearSelection();
+  };
+
+  const handleRemoveSheetSelection = (index: number) => {
+    setSheetSelections((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  const handleSheetNameChange = (index: number, sheetName: string) => {
+    setSheetSelections((prev) =>
+      prev.map((sheet, idx) =>
+        idx === index
+          ? {
+              ...sheet,
+              sheetName
+            }
+          : sheet
+      )
+    );
+  };
+
+  const handleWellLabelChange = (sheetIndex: number, wellId: string, label: string) => {
+    setSheetSelections((prev) =>
+      prev.map((sheet, idx) =>
+        idx === sheetIndex
+          ? {
+              ...sheet,
+              wells: sheet.wells.map((well) => (well.wellId === wellId ? { ...well, label } : well))
+            }
+          : sheet
+      )
+    );
+  };
+
+  const handleDownloadMultiSheet = () => {
+    if (!canDownloadMultiSheet) {
+      return;
+    }
+
+    setIsExporting(true);
+    try {
+      downloadSingle380MultiSheetXlsx(groupedByWell, sourceFileNames, sheetSelections);
     } finally {
       setIsExporting(false);
     }
@@ -124,8 +288,70 @@ export function Single380AnalysisStatusCard({
           )}
         </div>
         {selectionMode && <p className="text-xs text-muted-foreground">Selection mode enabled: click wells in the plate map to select/deselect.</p>}
+
+        <div className="space-y-2 rounded-md border p-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Multi-Sheet Builder</p>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={handleAddSheetSelection} disabled={!canAddSheetSelection || isExporting}>
+              Add new sheet ({selectedExportWellIds.length} selected)
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleDownloadMultiSheet} disabled={!canDownloadMultiSheet || isExporting}>
+              <Download className="mr-2 h-4 w-4" />
+              Download multi-sheet XLSX
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setSheetSelections([])} disabled={sheetSelections.length === 0 || isExporting}>
+              Clear sheets ({sheetSelections.length})
+            </Button>
+          </div>
+
+          {sheetSelections.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              Create sheets from selected wells, rename tabs/wells, add more sheets with different selections, then download.
+            </p>
+          ) : (
+            <div className="space-y-2 text-xs">
+              {sheetSelections.map((sheet, index) => (
+                <div key={`sheet-${index}`} className="space-y-2 rounded-sm border p-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium text-muted-foreground">Sheet name</span>
+                    <input
+                      className={INPUT_CLASS}
+                      value={sheet.sheetName}
+                      onChange={(event) => handleSheetNameChange(index, event.target.value)}
+                      placeholder={`Sheet ${index + 1}`}
+                    />
+                    <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => handleRemoveSheetSelection(index)}>
+                      Remove
+                    </Button>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    {sheet.sheetName || `Sheet ${index + 1}`} -{" "}
+                    {sheet.wells
+                      .map((well) => {
+                        const label = well.label.trim();
+                        return label && label !== well.wellId ? `${label} (${well.wellId})` : well.wellId;
+                      })
+                      .join(", ")}
+                  </p>
+                  <div className="grid gap-1 md:grid-cols-2">
+                    {sheet.wells.map((well) => (
+                      <label key={`sheet-${index}-well-${well.wellId}`} className="flex items-center gap-2">
+                        <span className="w-10 shrink-0 font-medium text-muted-foreground">{well.wellId}</span>
+                        <input
+                          className={`${INPUT_CLASS} w-full`}
+                          value={well.label}
+                          onChange={(event) => handleWellLabelChange(index, well.wellId, event.target.value)}
+                          placeholder={well.wellId}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </CardContent>
     </Card>
   );
 }
-
